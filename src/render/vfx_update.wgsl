@@ -1,7 +1,7 @@
 #import bevy_hanabi::vfx_common::{
     ChildInfo, ChildInfoBuffer, EventBuffer, DispatchIndirectArgs, IndirectBuffer,
     EffectMetadata, RenderGroupIndirect, SimParams, Spawner, DrawIndexedIndirectArgs, BatchInfo,
-    seed, tau, pcg_hash, to_float01, frand, frand2, frand3, frand4,
+    seed, effect_delta_time, tau, pcg_hash, to_float01, frand, frand2, frand3, frand4,
     rand_uniform_f, rand_uniform_vec2, rand_uniform_vec3, rand_uniform_vec4,
     rand_normal_f, rand_normal_vec2, rand_normal_vec3, rand_normal_vec4, proj
 }
@@ -137,6 +137,7 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
 
     // Initialize the PRNG seed
     seed = pcg_hash(particle_index ^ (*spawner).seed);
+    effect_delta_time = (*spawner).delta_time;
 
     var particle: Particle = particle_buffer.particles[base_particle + particle_index];
     {{AGE_CODE}}

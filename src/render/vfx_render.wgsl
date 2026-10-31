@@ -1,7 +1,7 @@
 #import bevy_render::view::View
 #import bevy_hanabi::vfx_common::{
     IndirectBuffer, SimParams, Spawner, BatchInfo,
-    seed, tau, pcg_hash, to_float01, frand, frand2, frand3, frand4,
+    seed, effect_delta_time, tau, pcg_hash, to_float01, frand, frand2, frand3, frand4,
     rand_uniform_f, rand_uniform_vec2, rand_uniform_vec3, rand_uniform_vec4,
     rand_normal_f, rand_normal_vec2, rand_normal_vec3, rand_normal_vec4, proj
 }
@@ -215,6 +215,7 @@ fn vertex(
     // Find the index of the effect this particle is part of.
     effect_location = find_location_from_particle(slab_particle_index);
     let spawner = &spawners[batch_info.base_effect + effect_location.effect_index];
+    effect_delta_time = (*spawner).delta_time;
     effect_metadata_index = (*spawner).effect_metadata_index;
     let base_particle = effect_location.base_particle;
 

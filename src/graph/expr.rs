@@ -1732,6 +1732,8 @@ impl ToWgslString for BuiltInOperator {
         match self {
             BuiltInOperator::Rand(_) => format!("{}()", self.name()),
             BuiltInOperator::IsAlive => "is_alive".to_string(),
+            // The effect's own delta: the global one, or its `EffectClock`.
+            BuiltInOperator::DeltaTime => "effect_delta_time".to_string(),
             _ => format!("sim_params.{}", self.name()),
         }
     }
@@ -2527,7 +2529,7 @@ impl ExprWriter {
     /// ```
     /// # use bevy_hanabi::*;
     /// let mut w = ExprWriter::new();
-    /// let x = w.delta_time(); // x = sim_params.delta_time;
+    /// let x = w.delta_time(); // x = effect_delta_time;
     /// ```
     pub fn delta_time(&self) -> WriterExpr {
         self.push(Expr::BuiltIn(BuiltInExpr::new(BuiltInOperator::DeltaTime)))
@@ -4334,7 +4336,11 @@ mod tests {
             let expr = ctx.eval(&m, handle);
             assert!(expr.is_ok());
             let expr = expr.unwrap();
-            assert_eq!(expr, format!("sim_params.{}", op.name()));
+            let expected = match op {
+                BuiltInOperator::DeltaTime => "effect_delta_time".to_string(),
+                _ => format!("sim_params.{}", op.name()),
+            };
+            assert_eq!(expr, expected);
         }
 
         // Exercise the expression introspection

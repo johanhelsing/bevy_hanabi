@@ -107,6 +107,24 @@ pub trait EffectSimulationTime {
     fn was_paused(&self) -> bool;
 }
 
+/// Runs one effect on a clock of its own: the seconds it advances this
+/// frame, in place of the delta of [`Time<EffectSimulation>`].
+///
+/// Insert it on the entity holding the [`ParticleEffect`] and write
+/// [`delta_secs`](Self::delta_secs) each frame. The spawner ticks by it and
+/// the effect's particles age and move by it, so one effect can warm up or
+/// keep running while the clock of every other effect stands still, or stand
+/// still while the others run. Without it the effect follows
+/// [`Time<EffectSimulation>`].
+///
+/// [`ParticleEffect`]: crate::ParticleEffect
+#[derive(Debug, Default, Clone, Copy, PartialEq, Component, Reflect)]
+#[reflect(Component)]
+pub struct EffectClock {
+    /// Seconds the effect advances this frame.
+    pub delta_secs: f32,
+}
+
 impl EffectSimulationTime for Time<EffectSimulation> {
     #[inline]
     fn relative_speed(&self) -> f32 {

@@ -915,10 +915,7 @@ mod tests {
         let str0 = context.eval(&module, outputs[0]).unwrap();
         let str1 = context.eval(&module, outputs[1]).unwrap();
         assert_eq!(str0, format!("sim_params.{}", BuiltInOperator::Time.name()));
-        assert_eq!(
-            str1,
-            format!("sim_params.{}", BuiltInOperator::DeltaTime.name())
-        );
+        assert_eq!(str1, "effect_delta_time");
     }
 
     #[test]

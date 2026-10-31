@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    CompiledParticleEffect, EffectAsset, EffectSimulation, ParticleEffect, SimulationCondition,
+    CompiledParticleEffect, EffectAsset, EffectClock, EffectSimulation, ParticleEffect,
+    SimulationCondition,
 };
 
 /// An RNG to be used in the CPU for the particle system engine
@@ -692,6 +693,14 @@ pub struct EffectSpawner {
     /// [`SpawnerSettings::starts_active()`]. An inactive spawner
     /// doesn't tick (no particle spawned, no internal state updated).
     pub active: bool,
+
+    /// Seconds the effect advances this frame: the delta of
+    /// [`Time<EffectSimulation>`], or of the effect's [`EffectClock`]. Set by
+    /// [`tick_spawners()`] each frame; the GPU ages and moves the effect's
+    /// particles by it.
+    ///
+    /// [`EffectClock`]: crate::EffectClock
+    delta_secs: f32,
 }
 
 impl EffectSpawner {
@@ -713,7 +722,14 @@ impl EffectSpawner {
             spawn_count: 0,
             spawn_remainder: 0.,
             active: settings.starts_active(),
+            delta_secs: 0.,
         }
+    }
+
+    /// Seconds the effect advances this frame (see [`tick_spawners()`]).
+    #[inline]
+    pub fn delta_secs(&self) -> f32 {
+        self.delta_secs
     }
 
     /// Set whether the spawner is active.
@@ -953,6 +969,7 @@ pub fn tick_spawners(
         &ParticleEffect,
         &CompiledParticleEffect,
         &InheritedVisibility,
+        Option<&EffectClock>,
         Option<&mut EffectSpawner>,
     )>,
 ) {
@@ -960,9 +977,12 @@ pub fn tick_spawners(
     let _span = bevy::log::info_span!("tick_spawners").entered();
     trace!("tick_spawners()");
 
-    let dt = time.delta_secs();
+    let global_dt = time.delta_secs();
 
-    for (entity, effect, compiled_effect, inherited_visibility, maybe_spawner) in query.iter_mut() {
+    for (entity, effect, compiled_effect, inherited_visibility, maybe_clock, maybe_spawner) in
+        query.iter_mut()
+    {
+        let dt = maybe_clock.map_or(global_dt, |clock| clock.delta_secs);
         // Skip effect which are not ready; this prevents ticking the spawner for an
         // effect not ready to consume those spawn commands.
         let mut can_tick = if compiled_effect.is_ready() {
@@ -991,11 +1011,13 @@ pub fn tick_spawners(
         }
 
         if let Some(mut effect_spawner) = maybe_spawner {
+            effect_spawner.delta_secs = dt;
             if can_tick {
                 effect_spawner.tick(dt, &mut rng.0);
             }
         } else {
             let mut effect_spawner = EffectSpawner::new(&asset.spawner);
+            effect_spawner.delta_secs = dt;
             if can_tick {
                 effect_spawner.tick(dt, &mut rng.0);
             }
