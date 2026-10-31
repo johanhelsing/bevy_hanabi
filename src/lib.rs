@@ -1,3 +1,6 @@
+// The render world's batch resources nest deep enough to pass the default
+// limit on newer compilers, where it is a lint `warnings` denies.
+#![recursion_limit = "256"]
 #![deny(
     warnings,
     missing_copy_implementations,
