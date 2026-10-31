@@ -1,7 +1,7 @@
 import bevy_hanabi::render::vfx_common::{
     ChildInfo, ChildInfoBuffer, EventBuffer, DispatchIndirectArgs, IndirectBuffer,
     EffectMetadata, RenderGroupIndirect, SimParams, Spawner, BatchInfo,
-    seed, tau, pcg_hash, to_float01, frand, frand2, frand3, frand4,
+    seed, effect_delta_time, tau, pcg_hash, to_float01, frand, frand2, frand3, frand4,
     rand_uniform_f, rand_uniform_vec2, rand_uniform_vec3, rand_uniform_vec4,
     rand_normal_f, rand_normal_vec2, rand_normal_vec3, rand_normal_vec4, proj
 };
@@ -155,8 +155,12 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     // store it in a variable, because the INIT_CODE might access it.
     let particle_counter = atomicAdd(&(*effect_metadata).particle_counter, 1u);
 
-    // Initialize the PRNG seed
-    seed = pcg_hash(particle_index ^ (*spawner).seed);
+    // Initialize the PRNG seed from the particle's spawn number, not the slot it
+    // landed in: slots are reused in whatever order particles died, so a slot
+    // seed draws differently each run, while the Nth particle of an effect
+    // draws the same each run.
+    seed = pcg_hash(particle_counter ^ (*spawner).seed);
+    effect_delta_time = (*spawner).delta_time;
 
     // Spawner transform
     let transform = transpose(

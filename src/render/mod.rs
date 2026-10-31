@@ -436,8 +436,11 @@ pub(crate) struct GpuSpawnerParams {
     /// effect's slab (if the effect has a parent effect), in number of
     /// particles (row index). This is ignored if the effect has no parent.
     parent_slab_offset: u32,
-    // For Pod
-    _padding0: u32,
+    /// Seconds the effect advances this frame: the global simulation delta,
+    /// or the effect's own [`EffectClock`].
+    ///
+    /// [`EffectClock`]: crate::EffectClock
+    delta_time: f32,
 }
 
 impl GpuSpawnerParams {
@@ -450,6 +453,7 @@ impl GpuSpawnerParams {
         parent_slab_offset: Option<u32>,
         effect_metadata_buffer_table_id: BufferTableId,
         maybe_cached_draw_indirect_args: Option<&CachedDrawIndirectArgs>,
+        delta_time: f32,
     ) -> Self {
         let transform = global_transform.to_matrix().into();
         let inverse_transform = Mat4::from(
@@ -469,6 +473,7 @@ impl GpuSpawnerParams {
                 .unwrap_or_default(),
             slab_offset,
             parent_slab_offset: parent_slab_offset.unwrap_or(u32::MAX),
+            delta_time,
             ..default()
         }
     }
@@ -2367,6 +2372,8 @@ pub(crate) struct ExtractedSpawner {
     pub transform: GlobalTransform,
     /// Is the effect visible this frame?
     pub is_visible: bool,
+    /// Seconds the effect advances this frame.
+    pub delta_time: f32,
 }
 
 /// Cache info for the metadata of the effect.
@@ -2768,6 +2775,7 @@ pub(crate) fn extract_effects(
             prng_seed: compiled_effect.prng_seed,
             transform: *transform,
             is_visible,
+            delta_time: effect_spawner.delta_secs(),
         };
         trace!(
             "[Effect {}] spawn_count={} prng_seed={}",
@@ -4603,6 +4611,7 @@ pub(crate) fn prepare_batch_inputs(
             parent_slab_offset,
             cached_effect_metadata.table_id,
             maybe_cached_draw_indirect_args,
+            extracted_spawner.delta_time,
         );
 
         trace!("Updating cached effect at entity {render_entity:?}...");

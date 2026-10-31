@@ -1,7 +1,7 @@
 import bevy_render::view::View;
 import bevy_hanabi::render::vfx_common::{
     IndirectBuffer, SimParams, Spawner, BatchInfo,
-    seed, tau, pcg_hash, to_float01, frand, frand2, frand3, frand4,
+    seed, effect_delta_time, tau, pcg_hash, to_float01, frand, frand2, frand3, frand4,
     rand_uniform_f, rand_uniform_vec2, rand_uniform_vec3, rand_uniform_vec4,
     rand_normal_f, rand_normal_vec2, rand_normal_vec3, rand_normal_vec4, proj,
     unpack_compressed_transform, unpack_compressed_transform_3x3_transpose
@@ -204,6 +204,7 @@ fn vertex(
     @if(!HAS_BATCHED_DRAW)
     spawner_index = batch_info.spawner_base;
     let spawner = &spawners[spawner_index];
+    effect_delta_time = (*spawner).delta_time;
     effect_metadata_index = (*spawner).effect_metadata_index;
     let base_particle = effect_location.base_particle;
 

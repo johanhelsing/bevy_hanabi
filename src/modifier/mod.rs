@@ -1310,6 +1310,8 @@ fn proj(u: vec3<f32>, v: vec3<f32>) -> vec3<f32> {{
 @group(1) @binding(0) var<storage, read_write> particle_buffer : ParticleBuffer;
 @group(2) @binding(0) var<storage, read_write> spawner : Spawner; // NOTE - same group as init
 
+var<private> effect_delta_time : f32 = 0.0;
+
 @compute @workgroup_size(64)
 fn main() {{
     var particle: Particle = particle_buffer.particles[0];

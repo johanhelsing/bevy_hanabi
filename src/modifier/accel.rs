@@ -174,7 +174,7 @@ impl Modifier for RadialAccelModifier {
 
                 Ok(format!(
                     r##"let radial = normalize((*particle).{} - {});
-            (*particle).{} += radial * (({}) * sim_params.delta_time);
+            (*particle).{} += radial * (({}) * effect_delta_time);
         "##,
                     Attribute::POSITION.name(),
                     origin,
@@ -291,7 +291,7 @@ impl Modifier for TangentAccelModifier {
             r##"fn {}(particle: ptr<function, Particle>) {{
     let radial = normalize((*particle).{} - {});
     let tangent = normalize(cross({}, radial));
-    (*particle).{} += tangent * (({}) * sim_params.delta_time);
+    (*particle).{} += tangent * (({}) * effect_delta_time);
 }}
 "##,
             func_name,

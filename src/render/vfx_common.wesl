@@ -51,9 +51,9 @@ struct Spawner {
     /// This is ignored if the effect has no parent.
     parent_slab_offset: u32,
 
-    // Keep this field here separate from auto-padding below, so that the WGSL and Rust
-    // struct definitions match.
-    unused: u32,
+    /// Seconds this effect advances this frame. Keep this field here separate from
+    /// auto-padding below, so that the WGSL and Rust struct definitions match.
+    delta_time: f32,
 
     {{SPAWNER_PADDING}}
 }
@@ -248,6 +248,11 @@ struct EffectMetadata {
 }
 
 var<private> seed : u32 = 0u;
+
+/// Seconds this effect advances this frame, read from its [`Spawner`] at the
+/// top of each entry point: the global simulation delta, or the effect's own
+/// clock. Generated code reads this, not `sim_params.delta_time`.
+var<private> effect_delta_time : f32 = 0.0;
 
 const tau: f32 = 6.283185307179586476925286766559;
 
