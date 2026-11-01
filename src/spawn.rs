@@ -853,8 +853,11 @@ impl EffectSpawner {
     /// remainder is saved for the next call.
     pub fn tick(&mut self, mut dt: f32, rng: &mut Pcg32) -> u32 {
         // If inactive, or if the finite number of cycles has been completed,
-        // then we're done.
+        // then we're done. Nothing is born on a tick where no time passes
+        // either: a burst's spawn window is zero long, and with the cycle clock
+        // standing at 0 the whole burst would fire again on every such tick.
         if !self.active
+            || dt <= 0.
             || (!self.settings.is_forever()
                 && (self.completed_cycle_count >= self.settings.cycle_count()))
         {
@@ -1295,6 +1298,21 @@ mod test {
         assert_eq!(count, 10);
         let count = spawner.tick(0.1, rng);
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_burst_no_time() {
+        let rng = &mut new_rng();
+        let spawner = SpawnerSettings::burst(5.0.into(), 2.0.into());
+        let mut spawner = EffectSpawner::new(&spawner);
+        // A fresh spawner's cycle clock stands at 0: with no time passing it must
+        // not fire its burst, let alone once per tick.
+        for _ in 0..3 {
+            assert_eq!(spawner.tick(0.0, rng), 0);
+        }
+        // Once time moves, the burst fires once.
+        assert_eq!(spawner.tick(0.1, rng), 5);
+        assert_eq!(spawner.tick(0.0, rng), 0);
     }
 
     #[test]
