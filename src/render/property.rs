@@ -4,7 +4,7 @@ use std::{
 };
 
 use bevy::{
-    asset::Handle,
+    asset::{AssetId, Handle},
     ecs::{lifecycle::Remove, observer::On, query::Without, system::Commands, world::Mut},
     image::Image,
     log::{error, trace},
@@ -808,6 +808,10 @@ pub struct PropertyBindGroupKey {
     pub binding_size: u32,
     /// Texture layout for the material binding points.
     pub texture_layout: TextureLayout,
+    /// The images bound at those points. The bind group holds them, so two
+    /// effects that differ only by their images need a bind group each:
+    /// keyed without them, the first effect's images are drawn for both.
+    pub textures: Vec<AssetId<Image>>,
 }
 
 // Note: use by HashMap to turn a key reference into an owned key when inserting
@@ -820,20 +824,26 @@ impl From<&PropertyBindGroupKey> for PropertyBindGroupKey {
 }
 
 impl PropertyBindGroupKey {
-    pub fn new(properties: &CachedEffectProperties, texture_layout: TextureLayout) -> Self {
+    pub fn new(
+        properties: &CachedEffectProperties,
+        texture_layout: TextureLayout,
+        textures: &[Handle<Image>],
+    ) -> Self {
         Self {
             buffer_index: properties.buffer_index,
             binding_size: properties.property_layout.min_binding_size().get() as u32,
             texture_layout,
+            textures: textures.iter().map(Handle::id).collect(),
         }
     }
 
     /// Get a key for an effect without property.
-    pub fn texture_only(texture_layout: TextureLayout) -> Self {
+    pub fn texture_only(texture_layout: TextureLayout, textures: &[Handle<Image>]) -> Self {
         Self {
             buffer_index: 0,
             binding_size: 0,
             texture_layout,
+            textures: textures.iter().map(Handle::id).collect(),
         }
     }
 
