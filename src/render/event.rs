@@ -264,8 +264,13 @@ pub(crate) fn allocate_events(
             // Nothing really to do for now because we hardcode a number of
             // events, so the allocation won't ever change...
         } else {
-            const FIXME_HARD_CODED_EVENT_COUNT: u32 = 256;
-            let cached_effect_events = event_cache.allocate(FIXME_HARD_CODED_EVENT_COUNT);
+            // The most spawn events a child takes in one frame; the rest are
+            // discarded. A parent emitting one event per particle per frame
+            // (a trail point behind every spark) needs as many as it has
+            // particles alive, and at 256 every spark past that lost its
+            // trail. Events are 4 bytes each, so this is 64 KB per child.
+            const EVENT_COUNT: u32 = 16 * 1024;
+            let cached_effect_events = event_cache.allocate(EVENT_COUNT);
             commands.entity(entity).insert(cached_effect_events);
         }
     }
