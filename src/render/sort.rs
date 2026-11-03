@@ -1397,6 +1397,75 @@ mod gpu_tests {
         assert_eq!(&view_slice[..num_particle as usize], expected.as_slice());
     }
 
+    /// Merge four blocks of ribbon-shaped pairs: many short ribbons with
+    /// random ids (a counter plus a salt, as a trail effect numbers them)
+    /// and a float age as the second key, each block sorted as the block
+    /// sort leaves it. Checks the full order and that no pair is lost or
+    /// doubled: a merge that drops a pair drops a particle from the
+    /// indirect list for good, and the effect leaks that slot.
+    #[test]
+    fn test_merge_ribbons_four_blocks() {
+        let mut test = MergeTest::new();
+        let num_particle: u32 = 3500;
+        // 350 ribbons of 10 points, ids spread over u32 by a hash, points
+        // interleaved as they are spawned (one per ribbon per frame).
+        let hash = |r: u32| r.wrapping_mul(2654435761).wrapping_add(0x9e3779b9);
+        let mut values: Vec<_> = (0..num_particle)
+            .map(|i| {
+                let ribbon = i % 350;
+                let point = i / 350;
+                DualKeyValuePair {
+                    key: hash(ribbon),
+                    key2: point as f32 * 0.016,
+                    value: i,
+                }
+            })
+            .collect();
+        let input = values.clone();
+        // The block sort leaves each block of 1024 sorted.
+        for block in values.chunks_mut(1024) {
+            block.sort();
+        }
+        let dummy = DualKeyValuePair {
+            key: u32::MAX,
+            key2: f32::INFINITY,
+            value: u32::MAX,
+        };
+        values.extend((0..num_particle).map(|_| dummy));
+        // Four blocks take two merge passes.
+        let num_passes = 2;
+        let merge_params = (0..num_passes)
+            .map(|i| GpuMergeParams {
+                max_list_size: 1024 << i,
+                source_buffer: i % 2,
+            })
+            .collect::<Vec<_>>();
+        let workgroups = [UVec3::new(1, 1, 1); 2];
+        let view = test.dispatch(
+            "merge_sort",
+            num_particle,
+            &values[..],
+            &merge_params[..],
+            &workgroups,
+        );
+        let view_slice: &[DualKeyValuePair] = cast_slice(&view[4..]);
+        let actual = &view_slice[..num_particle as usize];
+        // Nothing lost, nothing doubled.
+        let mut seen: Vec<u32> = actual.iter().map(|p| p.value).collect();
+        seen.sort_unstable();
+        let missing: Vec<u32> = (0..num_particle).filter(|v| seen.binary_search(v).is_err()).collect();
+        assert!(
+            missing.is_empty(),
+            "{} of {} pairs lost by the merge, first: {:?}",
+            missing.len(),
+            num_particle,
+            &missing[..missing.len().min(10)]
+        );
+        let mut expected = input;
+        expected.sort();
+        assert_eq!(actual, expected.as_slice());
+    }
+
     /// Helper for all GPU merge tests.
     struct MergeTest {
         #[allow(dead_code)]
