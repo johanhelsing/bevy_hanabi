@@ -31,13 +31,17 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
         return;
     }
 
-    // Clear any GPU event. The indexing is inconsistent here (indexing child info buffer with an
-    // effect instance), but is safe because there are always less child effects than there are effects
-    // in total, so the index will always cover the entire child info array. And we're only resetting
-    // a value so don't read anything, so only need to visit each entry once but the order doesn't matter.
-    @if(HAS_GPU_SPAWN_EVENTS)
-    if (global_effect_index < arrayLength(&child_info_buffer.rows)) {
-        child_info_buffer.rows[global_effect_index].event_count = 0;
+    // Clear the event count of every child for its parent's next update. The
+    // child info array can hold more rows than there are effects (the rows of
+    // children despawned while new ones were added stay in it), so each thread
+    // clears every num_effects-th row from its own index. A row left
+    // uncleared counts up forever, and its child spawns into every free slot
+    // each frame.
+    @if(HAS_GPU_SPAWN_EVENTS) {
+        let num_rows = arrayLength(&child_info_buffer.rows);
+        for (var row = global_effect_index; row < num_rows; row += sim_params.num_effects) {
+            child_info_buffer.rows[row].event_count = 0;
+        }
     }
 
     let spawner = &spawner_buffer[global_effect_index];
