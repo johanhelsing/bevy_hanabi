@@ -82,6 +82,7 @@ use crate::{
 
 mod aligned_buffer_vec;
 mod batch;
+mod bookkeeping;
 mod buffer_table;
 mod effect_cache;
 mod event;
@@ -89,6 +90,8 @@ mod gpu_buffer;
 #[cfg(test)]
 mod headless_batching_tests;
 mod property;
+#[cfg(all(test, feature = "gpu_tests"))]
+mod trail_tests;
 mod shader_cache;
 #[cfg(all(test, feature = "gpu_tests"))]
 mod shader_contract_tests;
@@ -97,6 +100,7 @@ mod sort;
 use aligned_buffer_vec::AlignedBufferVec;
 use batch::BatchSpawnInfo;
 pub(crate) use batch::Batcher;
+pub use bookkeeping::{BookkeepingProbePlugin, BookkeepingSample, BookkeepingSamples};
 use buffer_table::{BufferTable, BufferTableId};
 pub(crate) use effect_cache::EffectCache;
 pub(crate) use event::{allocate_events, on_remove_cached_effect_events, EventCache};
