@@ -277,7 +277,7 @@ impl ParticleSlab {
         let particle_buffer = render_device.create_buffer(&BufferDescriptor {
             label: Some(&particle_label),
             size: particle_capacity_bytes,
-            // COPY_SRC lets a test read particles back.
+            // COPY_SRC lets the bookkeeping probe read particle ages back.
             usage: BufferUsages::COPY_DST | BufferUsages::COPY_SRC | BufferUsages::STORAGE,
             mapped_at_creation,
         });
@@ -304,7 +304,7 @@ impl ParticleSlab {
         let indirect_index_buffer = render_device.create_buffer(&BufferDescriptor {
             label: Some(&indirect_label),
             size: indirect_capacity_bytes,
-            // COPY_SRC lets a test read the alive and dead lists back.
+            // COPY_SRC lets the bookkeeping probe read the alive and dead lists back.
             usage: BufferUsages::COPY_DST | BufferUsages::COPY_SRC | BufferUsages::STORAGE,
             mapped_at_creation: true,
         });

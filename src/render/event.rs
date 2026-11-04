@@ -365,7 +365,7 @@ impl EventCache {
         Self {
             device,
             child_infos_buffer: HybridAlignedBufferVec::new(
-                // COPY_SRC lets a test read the event counts back.
+                // COPY_SRC lets the bookkeeping probe read the event counts back.
                 BufferUsages::STORAGE | BufferUsages::COPY_SRC,
                 NonZeroU64::new(4).unwrap(),
                 Some("hanabi:buffer:child_infos".to_string()),
