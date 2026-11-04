@@ -139,7 +139,9 @@ struct Run {
     children: Vec<Entity>,
 }
 
-fn run(setup: Setup, frames: u32) -> Run {
+/// A headless app with hanabi, the bookkeeping probe and a camera, which
+/// hanabi needs before it allocates its buffers.
+fn headless_app() -> App {
     let mut app = App::new();
     app.add_plugins(
         DefaultPlugins
@@ -180,6 +182,12 @@ fn run(setup: Setup, frames: u32) -> Run {
         RenderTarget::Image(target.into()),
         Transform::from_xyz(0., 0., 10.).looking_at(Vec3::ZERO, Vec3::Y),
     ));
+    app
+}
+
+fn run(setup: Setup, frames: u32) -> Run {
+    let mut app = headless_app();
+    let world = app.world_mut();
     let mut assets = world.resource_mut::<Assets<EffectAsset>>();
     let (retired_head, retired_body) = (
         assets.add(head_effect(setup)),
@@ -399,4 +407,79 @@ fn a_trail_after_retired_emitters_holds_steady() {
         retired: 2,
         ..TRAILS
     });
+}
+
+/// A parent at full capacity gets a trail point for every particle each
+/// frame: its child's spawn event slice is sized from the parent's capacity,
+/// so none of the events is dropped. The parent holds more particles than the
+/// fixed slice of 16384 events the child had before.
+#[test]
+fn a_full_parent_gets_a_trail_point_for_every_particle() {
+    const PARENTS: u32 = 20_000;
+    let frame_secs: f32 = 1. / 60.;
+    let mut app = headless_app();
+    let world = app.world_mut();
+    let writer = ExprWriter::new();
+    let position = SetAttributeModifier::new(Attribute::POSITION, writer.lit(Vec3::ZERO).expr());
+    let age = SetAttributeModifier::new(Attribute::AGE, writer.lit(0.).expr());
+    let lifetime = SetAttributeModifier::new(Attribute::LIFETIME, writer.lit(1000.).expr());
+    let trail = EmitSpawnEventModifier {
+        condition: EventEmitCondition::Always,
+        count: writer.lit(1u32).expr(),
+        child_index: 0,
+    };
+    let head = EffectAsset::new(
+        PARENTS,
+        SpawnerSettings::once((PARENTS as f32).into()),
+        writer.finish(),
+    )
+    .with_name("full heads")
+    .with_simulation_condition(SimulationCondition::Always)
+    .with_motion_integration(MotionIntegration::None)
+    .init(position)
+    .init(age)
+    .init(lifetime)
+    .update(trail);
+    // Each point lives a frame and a half, so the points alive after an
+    // update pass are the ones born from a single frame's events.
+    let body = body_effect(Setup {
+        body_lifetime: 1.5 * frame_secs,
+        body_capacity: 2 * PARENTS,
+        ribbon: false,
+        ..TRAILS
+    });
+    let mut assets = world.resource_mut::<Assets<EffectAsset>>();
+    let (head, body) = (assets.add(head), assets.add(body));
+    let parent = world.spawn(ParticleEffect::new(head)).id();
+    let child = world
+        .spawn((ParticleEffect::new(body), EffectParent::new(parent)))
+        .id();
+
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
+        frame_secs,
+    )));
+    for _ in 0..60 * 3 {
+        app.update();
+    }
+
+    let samples = app.world().resource::<BookkeepingSamples>().get();
+    let parents: Vec<_> = samples
+        .iter()
+        .filter(|s| s.entity == parent)
+        .map(|s| s.alive_count)
+        .collect();
+    let points: Vec<_> = samples
+        .iter()
+        .filter(|s| s.entity == child)
+        .map(|s| s.alive_count)
+        .collect();
+    println!("parents alive: {parents:?}, points alive: {points:?}");
+    assert!(
+        parents.len() > 1 && parents.iter().skip(1).all(|&n| n == PARENTS),
+        "the parent is not full: {parents:?}"
+    );
+    assert!(
+        points.len() > 1 && points.iter().skip(1).all(|&n| n == PARENTS),
+        "the {PARENTS} parents do not get a point each: {points:?}"
+    );
 }

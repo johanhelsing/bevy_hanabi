@@ -1453,7 +1453,9 @@ mod gpu_tests {
         // Nothing lost, nothing doubled.
         let mut seen: Vec<u32> = actual.iter().map(|p| p.value).collect();
         seen.sort_unstable();
-        let missing: Vec<u32> = (0..num_particle).filter(|v| seen.binary_search(v).is_err()).collect();
+        let missing: Vec<u32> = (0..num_particle)
+            .filter(|v| seen.binary_search(v).is_err())
+            .collect();
         assert!(
             missing.is_empty(),
             "{} of {} pairs lost by the merge, first: {:?}",

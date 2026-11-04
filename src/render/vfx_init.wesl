@@ -128,8 +128,13 @@ fn main(@builtin(global_invocation_id) global_invocation_id: vec3<u32>) {
     let global_child_index = (*effect_metadata).global_child_index;
     @if(CONSUME_GPU_SPAWN_EVENTS)
     let event_count = child_info_buffer.rows[global_child_index].event_count;
+    // The parents count every event they emit, also the ones past this
+    // effect's slice of the event buffer, which they could not store. Those
+    // are dropped: reading one would spawn a particle from another parent.
     @if(CONSUME_GPU_SPAWN_EVENTS)
-    if (event_index >= u32(event_count)) {
+    let stored_event_count = min(u32(event_count), arrayLength(&event_buffer.spawn_events));
+    @if(CONSUME_GPU_SPAWN_EVENTS)
+    if (event_index >= stored_event_count) {
         return;
     }
     // Cap to the actual number of spawning requested by CPU (in the case of

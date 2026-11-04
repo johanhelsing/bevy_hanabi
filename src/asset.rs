@@ -18,9 +18,10 @@ use wgpu::{BlendComponent, BlendFactor, BlendOperation, BlendState};
 
 use crate::Modifiers;
 use crate::{
+    graph::{Expr, LiteralExpr},
     modifier::{Modifier, RenderModifier},
-    ExprHandle, ModifierContext, Module, ParticleLayout, Property, PropertyLayout, SimulationSpace,
-    SpawnerSettings, TextureLayout,
+    EmitSpawnEventModifier, ExprHandle, ModifierContext, Module, ParticleLayout, Property,
+    PropertyLayout, ScalarValue, SimulationSpace, SpawnerSettings, TextureLayout, Value,
 };
 
 /// Type of motion integration applied to the particles of a system.
@@ -584,6 +585,39 @@ impl EffectAsset {
     /// [`ModifierContext::Update`]: crate::ModifierContext::Update
     pub fn update_modifiers(&self) -> impl Iterator<Item = &dyn Modifier> {
         self.update_modifiers.iter().map(|bm| &**bm)
+    }
+
+    /// The most spawn events one particle of this effect emits to each of its
+    /// child effects in one frame, indexed by
+    /// [`EmitSpawnEventModifier::child_index`]: the sum of the counts of the
+    /// modifiers emitting to that child, as each emits at most once per
+    /// particle per frame. `None` for a child that a modifier emits to with a
+    /// count that is not a literal, since that count is known only on the
+    /// GPU.
+    pub(crate) fn spawn_events_per_particle(&self) -> Vec<Option<u32>> {
+        let mut counts: Vec<Option<u32>> = vec![];
+        for modifier in self.update_modifiers() {
+            let Some(emit) = modifier
+                .as_reflect()
+                .downcast_ref::<EmitSpawnEventModifier>()
+            else {
+                continue;
+            };
+            let index = emit.child_index as usize;
+            if counts.len() <= index {
+                counts.resize(index + 1, Some(0));
+            }
+            let count = match self.module.get(emit.count) {
+                Some(Expr::Literal(LiteralExpr {
+                    value: Value::Scalar(ScalarValue::Uint(count)),
+                })) => Some(*count),
+                _ => None,
+            };
+            counts[index] = counts[index]
+                .zip(count)
+                .map(|(sum, count)| sum.saturating_add(count));
+        }
+        counts
     }
 
     /// Get a list of all the render modifiers of this effect.
@@ -1211,6 +1245,30 @@ mod tests {
             let m = effect.modifiers().next().unwrap();
             assert!(m.context().contains(ModifierContext::Render));
         }
+    }
+
+    #[test]
+    fn spawn_events_per_particle_sums_the_literal_counts_of_each_child() {
+        let writer = ExprWriter::new();
+        let emit = |count: ExprHandle, child_index| EmitSpawnEventModifier {
+            condition: EventEmitCondition::Always,
+            count,
+            child_index,
+        };
+        let trail = emit(writer.lit(1u32).expr(), 0);
+        let burst = emit(writer.lit(5u32).expr(), 0);
+        let random = emit(writer.rand(ScalarType::Uint).expr(), 2);
+        let effect = EffectAsset::new(32, SpawnerSettings::default(), writer.finish())
+            .update(trail)
+            .update(burst)
+            .update(random);
+        assert_eq!(
+            effect.spawn_events_per_particle(),
+            vec![Some(6), Some(0), None]
+        );
+        assert!(EffectAsset::default()
+            .spawn_events_per_particle()
+            .is_empty());
     }
 
     #[test]

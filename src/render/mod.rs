@@ -90,12 +90,12 @@ mod gpu_buffer;
 #[cfg(test)]
 mod headless_batching_tests;
 mod property;
-#[cfg(all(test, feature = "gpu_tests"))]
-mod trail_tests;
 mod shader_cache;
 #[cfg(all(test, feature = "gpu_tests"))]
 mod shader_contract_tests;
 mod sort;
+#[cfg(all(test, feature = "gpu_tests"))]
+mod trail_tests;
 
 use aligned_buffer_vec::AlignedBufferVec;
 use batch::BatchSpawnInfo;
@@ -2356,6 +2356,10 @@ pub(crate) struct ExtractedEffect {
     pub effect_shaders: EffectShaders,
     /// Condition under which the effect is simulated.
     pub simulation_condition: SimulationCondition,
+    /// The most spawn events one particle emits to each child effect in one
+    /// frame, from [`EffectAsset::spawn_events_per_particle()`]. Sizes the
+    /// event slice of each child.
+    pub spawn_events_per_particle: Vec<Option<u32>>,
 }
 
 /// Extracted data for the [`GpuSpawnerParams`].
@@ -2762,6 +2766,7 @@ pub(crate) fn extract_effects(
             alpha_mode,
             effect_shaders: effect_shaders.clone(),
             simulation_condition: asset.simulation_condition,
+            spawn_events_per_particle: asset.spawn_events_per_particle(),
         };
         if let Some(mut extracted_effect) = maybe_extracted_effect {
             extracted_effect.set_if_neq(new_extracted_effect);

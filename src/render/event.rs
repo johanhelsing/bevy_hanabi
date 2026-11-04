@@ -30,7 +30,7 @@ use super::{
     BufferBindingSource, EffectBindGroups, GpuDispatchIndirectArgs,
 };
 use crate::{
-    render::{effect_cache::SlabId, ChildEffectOf},
+    render::{effect_cache::SlabId, ChildEffectOf, ChildrenEffects, ExtractedEffect},
     ParticleLayout,
 };
 
@@ -246,10 +246,25 @@ impl CachedEffectEvents {
 ///
 /// This system manages allocating storage for GPU events of child effects, and
 /// spawning the [`CachedEffectEvents`] storing that allocation.
+///
+/// A child's slice holds the most spawn events it can use in one frame: one
+/// for each event its parent can emit to it, the parent's capacity times the
+/// events each particle emits per frame, and at most the child's own capacity,
+/// since each event spawns a particle into a free slot and the rest are
+/// discarded. A count that is not a literal is only known on the GPU, so the
+/// slice is then the child's capacity. The slice is re-allocated whenever that
+/// size changes, as when the child is linked to another parent.
 pub(crate) fn allocate_events(
     mut commands: Commands,
     mut event_cache: ResMut<EventCache>,
-    mut q_child_effects: Query<(Entity, Option<&mut CachedEffectEvents>), With<ChildEffectOf>>,
+    mut effect_bind_groups: ResMut<EffectBindGroups>,
+    q_child_effects: Query<(
+        Entity,
+        &ExtractedEffect,
+        &ChildEffectOf,
+        Option<&CachedEffectEvents>,
+    )>,
+    q_parent_effects: Query<(&ExtractedEffect, &ChildrenEffects)>,
     q_old_child_effects: Query<Entity, (With<CachedEffectEvents>, Without<ChildEffectOf>)>,
 ) {
     #[cfg(feature = "trace")]
@@ -258,21 +273,49 @@ pub(crate) fn allocate_events(
 
     event_cache.clear_previous_frame_resizes();
 
-    // Allocate storage and add the component to childs missing it.
-    for (entity, maybe_cached_events) in &mut q_child_effects {
-        if let Some(_cached_events) = maybe_cached_events {
-            // Nothing really to do for now because we hardcode a number of
-            // events, so the allocation won't ever change...
-        } else {
-            // The most spawn events a child takes in one frame; the rest are
-            // discarded. A parent emitting one event per particle per frame
-            // (a trail point behind every spark) needs as many as it has
-            // particles alive, and at 256 every spark past that lost its
-            // trail. Events are 4 bytes each, so this is 64 KB per child.
-            const EVENT_COUNT: u32 = 16 * 1024;
-            let cached_effect_events = event_cache.allocate(EVENT_COUNT);
-            commands.entity(entity).insert(cached_effect_events);
+    // Allocate storage and add the component to childs missing it, or whose
+    // allocation doesn't fit anymore.
+    for (entity, extracted_effect, child_effect_of, maybe_cached_events) in &q_child_effects {
+        let Ok((parent_effect, children_effects)) = q_parent_effects.get(child_effect_of.parent)
+        else {
+            // Not extracted yet, or not anymore; allocate_parent_child_infos()
+            // handles the missing parent.
+            continue;
+        };
+        let Some(local_child_index) = children_effects.iter().position(|e| *e == entity) else {
+            continue;
+        };
+        let per_particle = parent_effect
+            .spawn_events_per_particle
+            .get(local_child_index)
+            .copied()
+            .unwrap_or(Some(0));
+        let event_count = per_particle
+            .map_or(extracted_effect.capacity, |per_particle| {
+                parent_effect
+                    .capacity
+                    .saturating_mul(per_particle)
+                    .min(extracted_effect.capacity)
+            })
+            .max(1);
+
+        if let Some(cached_events) = maybe_cached_events {
+            if cached_events.capacity() == event_cache.slice_size(event_count) {
+                continue;
+            }
+            trace!(
+                "Child effect {entity:?}: re-allocating its event slice from {} to {event_count} events.",
+                cached_events.capacity()
+            );
+            free_events(
+                &mut event_cache,
+                &mut effect_bind_groups,
+                entity,
+                cached_events,
+            );
         }
+        let cached_effect_events = event_cache.allocate(event_count);
+        commands.entity(entity).insert(cached_effect_events);
     }
 
     // Remove the component from effects which are not a child anymore. This
@@ -295,19 +338,35 @@ pub(crate) fn on_remove_cached_effect_events(
     trace!("on_remove_cached_effect_events");
 
     if let Ok((entity, cached_effect_events)) = query.get(trigger.event().entity) {
-        match event_cache.free(cached_effect_events) {
-            Err(err) => {
-                error!("Error while freeing cached events for effect {entity:?}: {err:?}");
-            }
-            Ok(buffer_state) => {
-                if buffer_state != SlabState::Used {
-                    // Clear bind groups associated with the old buffer
-                    effect_bind_groups.init_metadata_bind_groups.clear();
-                    effect_bind_groups.update_metadata_bind_groups.clear();
-                }
+        free_events(
+            &mut event_cache,
+            &mut effect_bind_groups,
+            entity,
+            cached_effect_events,
+        );
+    };
+}
+
+/// Free the event allocation of an effect, and clear the bind groups bound to
+/// its event buffer if that buffer is destroyed.
+fn free_events(
+    event_cache: &mut EventCache,
+    effect_bind_groups: &mut EffectBindGroups,
+    entity: Entity,
+    cached_effect_events: &CachedEffectEvents,
+) {
+    match event_cache.free(cached_effect_events) {
+        Err(err) => {
+            error!("Error while freeing cached events for effect {entity:?}: {err:?}");
+        }
+        Ok(buffer_state) => {
+            if buffer_state != SlabState::Used {
+                // Clear bind groups associated with the old buffer
+                effect_bind_groups.init_metadata_bind_groups.clear();
+                effect_bind_groups.update_metadata_bind_groups.clear();
             }
         }
-    };
+    }
 }
 
 /// Error code for [`EventCache::free()`].
@@ -407,10 +466,24 @@ impl EventCache {
         self.child_infos_buffer.buffer()
     }
 
+    /// The number of events [`allocate()`] reserves for a request of
+    /// `num_events`: rounded up to a multiple of the device's storage buffer
+    /// offset alignment, so that each slice packed after it in a buffer starts
+    /// at an offset a binding accepts.
+    ///
+    /// [`allocate()`]: Self::allocate
+    pub fn slice_size(&self, num_events: u32) -> u32 {
+        let align_events = self.device.limits().min_storage_buffer_offset_alignment / 4;
+        num_events.next_multiple_of(align_events.max(1))
+    }
+
     /// Allocate a memory block to store the given number of GPU events.
     ///
     /// The allocation always succeeds, allocating a new GPU event buffer if
     /// none of the existing ones can store the requested number of events.
+    /// The block holds [`slice_size()`] events, which may be more than asked.
+    ///
+    /// [`slice_size()`]: Self::slice_size
     ///
     /// # Returns
     ///
@@ -421,6 +494,7 @@ impl EventCache {
     /// Panics if the number of events `num_events` is zero.
     pub fn allocate(&mut self, num_events: u32) -> CachedEffectEvents {
         assert!(num_events > 0);
+        let num_events = self.slice_size(num_events);
 
         // Allocate an entry into the indirect dispatch buffer
         // The value pushed is a dummy; see allocate_frame_buffers().
