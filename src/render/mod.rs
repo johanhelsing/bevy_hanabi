@@ -2766,7 +2766,7 @@ pub(crate) fn extract_effects(
             alpha_mode,
             effect_shaders: effect_shaders.clone(),
             simulation_condition: asset.simulation_condition,
-            spawn_events_per_particle: asset.spawn_events_per_particle(),
+            spawn_events_per_particle: compiled_effect.spawn_events_per_particle.clone(),
         };
         if let Some(mut extracted_effect) = maybe_extracted_effect {
             extracted_effect.set_if_neq(new_extracted_effect);

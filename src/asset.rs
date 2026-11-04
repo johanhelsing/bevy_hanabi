@@ -591,11 +591,12 @@ impl EffectAsset {
     /// child effects in one frame, indexed by
     /// [`EmitSpawnEventModifier::child_index`]: the sum of the counts of the
     /// modifiers emitting to that child, as each emits at most once per
-    /// particle per frame. `None` for a child that a modifier emits to with a
-    /// count that is not a literal, since that count is known only on the
-    /// GPU.
+    /// particle per frame. `None` for a child whose count cannot be read: one
+    /// that a modifier emits to with a count that is not a literal, known only
+    /// on the GPU, or one that no [`EmitSpawnEventModifier`] emits to, which
+    /// another modifier may. A child past the end of the list is the same.
     pub(crate) fn spawn_events_per_particle(&self) -> Vec<Option<u32>> {
-        let mut counts: Vec<Option<u32>> = vec![];
+        let mut emits: Vec<Vec<Option<u32>>> = vec![];
         for modifier in self.update_modifiers() {
             let Some(emit) = modifier
                 .as_reflect()
@@ -604,20 +605,27 @@ impl EffectAsset {
                 continue;
             };
             let index = emit.child_index as usize;
-            if counts.len() <= index {
-                counts.resize(index + 1, Some(0));
+            if emits.len() <= index {
+                emits.resize(index + 1, vec![]);
             }
-            let count = match self.module.get(emit.count) {
+            emits[index].push(match self.module.get(emit.count) {
                 Some(Expr::Literal(LiteralExpr {
                     value: Value::Scalar(ScalarValue::Uint(count)),
                 })) => Some(*count),
                 _ => None,
-            };
-            counts[index] = counts[index]
-                .zip(count)
-                .map(|(sum, count)| sum.saturating_add(count));
+            });
         }
-        counts
+        emits
+            .into_iter()
+            .map(|counts| {
+                if counts.is_empty() {
+                    return None;
+                }
+                counts
+                    .into_iter()
+                    .try_fold(0u32, |sum, count| Some(sum.saturating_add(count?)))
+            })
+            .collect()
     }
 
     /// Get a list of all the render modifiers of this effect.
@@ -1264,7 +1272,7 @@ mod tests {
             .update(random);
         assert_eq!(
             effect.spawn_events_per_particle(),
-            vec![Some(6), Some(0), None]
+            vec![Some(6), None, None]
         );
         assert!(EffectAsset::default()
             .spawn_events_per_particle()

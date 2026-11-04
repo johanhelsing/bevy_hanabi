@@ -1769,6 +1769,9 @@ pub struct CompiledParticleEffect {
     alpha_mode: AlphaMode,
     /// Particle layout of the parent effect, if any.
     parent_particle_layout: Option<ParticleLayout>,
+    /// The most spawn events one particle emits to each child effect in one
+    /// frame, from [`EffectAsset::spawn_events_per_particle()`].
+    spawn_events_per_particle: Vec<Option<u32>>,
     /// PRNG seed.
     prng_seed: u32,
     /// Ready state reported by the render world.
@@ -1788,6 +1791,7 @@ impl Default for CompiledParticleEffect {
             layout_flags: LayoutFlags::NONE,
             alpha_mode: default(),
             parent_particle_layout: None,
+            spawn_events_per_particle: vec![],
             prng_seed: 0,
             is_ready: false,
         }
@@ -1869,6 +1873,7 @@ impl CompiledParticleEffect {
 
         self.parent = parent_entity;
         self.children = child_entities;
+        self.spawn_events_per_particle = asset.spawn_events_per_particle();
 
         let num_event_bindings = self.children.len() as u32;
         let shader_source = match EffectShaderSources::generate(

@@ -251,9 +251,12 @@ impl CachedEffectEvents {
 /// for each event its parent can emit to it, the parent's capacity times the
 /// events each particle emits per frame, and at most the child's own capacity,
 /// since each event spawns a particle into a free slot and the rest are
-/// discarded. A count that is not a literal is only known on the GPU, so the
-/// slice is then the child's capacity. The slice is re-allocated whenever that
-/// size changes, as when the child is linked to another parent.
+/// discarded. A count that cannot be read on the CPU gives the child's
+/// capacity ([`EffectAsset::spawn_events_per_particle()`]). The slice is
+/// re-allocated whenever that size changes, as when the child is linked to
+/// another parent.
+///
+/// [`EffectAsset::spawn_events_per_particle()`]: crate::EffectAsset::spawn_events_per_particle
 pub(crate) fn allocate_events(
     mut commands: Commands,
     mut event_cache: ResMut<EventCache>,
@@ -289,7 +292,7 @@ pub(crate) fn allocate_events(
             .spawn_events_per_particle
             .get(local_child_index)
             .copied()
-            .unwrap_or(Some(0));
+            .flatten();
         let event_count = per_particle
             .map_or(extracted_effect.capacity, |per_particle| {
                 parent_effect
