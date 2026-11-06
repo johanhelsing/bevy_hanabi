@@ -637,6 +637,12 @@ impl EventCache {
         }
     }
 
+    /// Free the block of [`GpuChildInfo`] structures of a parent.
+    pub fn free_child_infos(&mut self, cached_parent_info: &CachedParentInfo) {
+        self.child_infos_buffer
+            .remove(cached_parent_info.byte_range.clone());
+    }
+
     /// Re-allocate a block of [`GpuChildInfo`] structures for a modified list
     /// of children.
     pub fn reallocate_child_infos(

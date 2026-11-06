@@ -2201,6 +2201,20 @@ fn compile_effects(
         let need_rebuild =
             effect.is_changed() || material_changed || compiled_effect.children != child_entities;
         if need_rebuild || (compiled_effect.asset != effect.handle) {
+            // A parent emitting to a child it does not have, as when that
+            // child was despawned first, would compile to an invalid shader.
+            // Leave it uncompiled, so it is not drawn, until it has them all.
+            if child_entities.len() < asset.spawn_events_per_particle().len() {
+                debug!(
+                    "Effect on entity {:?} emits to {} child effect(s) but has {}, not compiled.",
+                    entity,
+                    asset.spawn_events_per_particle().len(),
+                    child_entities.len()
+                );
+                compiled_effect.effect_shader = None;
+                compiled_effect.children = child_entities;
+                continue;
+            }
             if need_rebuild {
                 debug!("Invalidating the compiled cache for effect on entity {:?} due to changes in the ParticleEffect component. If you see this message too much, then performance might be affected. Find why the change detection of the ParticleEffect is triggered.", entity);
             }

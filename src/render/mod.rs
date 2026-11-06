@@ -17,7 +17,7 @@ use bevy::{
     ecs::{
         change_detection::Tick,
         prelude::*,
-        system::{lifetimeless::*, SystemParam, SystemState},
+        system::{lifetimeless::*, EntityCommands, SystemParam, SystemState},
     },
     log::trace,
     mesh::MeshVertexBufferLayoutRef,
@@ -2360,6 +2360,9 @@ pub(crate) struct ExtractedEffect {
     /// frame, from [`EffectAsset::spawn_events_per_particle()`]. Sizes the
     /// event slice of each child.
     pub spawn_events_per_particle: Vec<Option<u32>>,
+    /// Number of child effects the shaders were compiled to emit events to,
+    /// one event buffer binding each.
+    pub num_event_buffers: u32,
 }
 
 /// Extracted data for the [`GpuSpawnerParams`].
@@ -2629,6 +2632,17 @@ pub(crate) fn report_ready_state(
     }
 }
 
+/// Remove what an effect extracted, so the render world skips it.
+fn drop_extraction(mut cmd: EntityCommands) {
+    cmd.remove::<(
+        ExtractedEffect,
+        ExtractedSpawner,
+        ExtractedEffectMesh,
+        ExtractedProperties,
+        ChildEffectOf,
+    )>();
+}
+
 /// System extracting data for rendering of all active [`ParticleEffect`]
 /// components.
 ///
@@ -2676,9 +2690,13 @@ pub(crate) fn extract_effects(
         transform,
     ) in q_effects.iter()
     {
-        // Check if shaders are configured
+        // Check if shaders are configured. An effect left uncompiled, as a
+        // child whose parent is gone or a parent missing a child, drops what
+        // it extracted before, so the render world does not run it on stale
+        // shaders and links.
         let Some(effect_shaders) = compiled_effect.get_configured_shaders() else {
             trace!("Effect {:?}: no configured shader, skipped.", main_entity);
+            drop_extraction(commands.entity(render_entity));
             continue;
         };
 
@@ -2698,6 +2716,22 @@ pub(crate) fn extract_effects(
             && maybe_view_visibility.map(|cv| cv.get()).unwrap_or(true);
 
         let mut cmd = commands.entity(render_entity);
+
+        // Resolve the render entity of the parent, if any. A child whose
+        // parent is gone (despawned before it, say) is not extracted: its
+        // shaders read the parent's particles and events, so it cannot run
+        // as a root effect. Drop what it extracted before, so the render
+        // world skips it until it is despawned too.
+        let parent_render_entity = if let Some(parent) = compiled_effect.parent {
+            let Ok((_, render_entity, _, _, _, _, _, _)) = q_effects.get(parent) else {
+                debug!("Effect {main_entity:?}: parent {parent:?} not found, skipped.");
+                drop_extraction(cmd);
+                continue;
+            };
+            Some(render_entity)
+        } else {
+            None
+        };
 
         // Fetch the existing extraction compoennts, if any, which we need to
         // update. Because we use SyncToRenderWorld, there's always a
@@ -2767,6 +2801,7 @@ pub(crate) fn extract_effects(
             effect_shaders: effect_shaders.clone(),
             simulation_condition: asset.simulation_condition,
             spawn_events_per_particle: compiled_effect.spawn_events_per_particle.clone(),
+            num_event_buffers: compiled_effect.children.len() as u32,
         };
         if let Some(mut extracted_effect) = maybe_extracted_effect {
             extracted_effect.set_if_neq(new_extracted_effect);
@@ -2818,22 +2853,6 @@ pub(crate) fn extract_effects(
             cmd.insert(new_mesh);
         }
 
-        // Extract the parent, if any, and resolve its render entity
-        let parent_render_entity = if let Some(main_entity) = compiled_effect.parent {
-            let Ok((_, render_entity, _, _, _, _, _, _)) = q_effects.get(main_entity) else {
-                error!(
-                    "Failed to resolve render entity of parent with main entity {:?}.",
-                    main_entity
-                );
-                cmd.remove::<ChildEffectOf>();
-                // TODO - prevent extraction altogether here, instead of just
-                // de-parenting?
-                continue;
-            };
-            Some(render_entity)
-        } else {
-            None
-        };
         if let Some(render_entity) = parent_render_entity {
             let new_child_of = ChildEffectOf {
                 parent: render_entity,
@@ -3661,10 +3680,20 @@ pub fn allocate_parent_child_infos(
         &ChildrenEffects,
         Option<&mut CachedParentInfo>,
     )>,
+    // Parent effects whose children are all gone.
+    q_childless_parents: Query<(Entity, &CachedParentInfo), Without<ChildrenEffects>>,
 ) {
     #[cfg(feature = "trace")]
     let _span = bevy::log::info_span!("allocate_child_infos").entered();
     trace!("allocate_child_infos");
+
+    // A parent whose last child is gone drops its child list, which binds the
+    // event slices of children that no longer exist.
+    for (parent_entity, cached_parent_info) in &q_childless_parents {
+        trace!("Parent effect {parent_entity:?} has no child left, removing CachedParentInfo.");
+        event_cache.free_child_infos(cached_parent_info);
+        commands.entity(parent_entity).remove::<CachedParentInfo>();
+    }
 
     // Loop on all child effects and ensure their CachedChildInfo is up-to-date.
     for (child_entity, _, child_effect_of, cached_effect_events, maybe_cached_child_info) in
@@ -3825,10 +3854,9 @@ pub fn allocate_parent_child_infos(
 pub fn prepare_init_update_pipelines(
     mut q_effects: Query<(
         Entity,
-        &ExtractedEffect,
+        Ref<ExtractedEffect>,
         &CachedEffect,
         Option<&CachedChildInfo>,
-        Option<&CachedParentInfo>,
         Option<&CachedEffectProperties>,
         &mut CachedPipelines,
     )>,
@@ -3853,7 +3881,6 @@ pub fn prepare_init_update_pipelines(
         extracted_effect,
         cached_effect,
         maybe_cached_child_info,
-        maybe_cached_parent_info,
         maybe_cached_properties,
         mut cached_pipelines,
     ) in &mut q_effects
@@ -3863,6 +3890,14 @@ pub fn prepare_init_update_pipelines(
             entity,
             cached_pipelines.flags
         );
+
+        // Re-specialize the pipelines of an effect whose extracted data
+        // changed or came back, as a parent recompiled with fewer children
+        // has new shaders and fewer event buffers to bind.
+        if extracted_effect.is_changed() {
+            cached_pipelines.init = None;
+            cached_pipelines.update = None;
+        }
 
         let particle_layout = &cached_effect.slice.particle_layout;
         let particle_layout_min_binding_size = particle_layout.min_binding_size32();
@@ -3970,10 +4005,7 @@ pub fn prepare_init_update_pipelines(
                 .flags
                 .remove(CachedPipelineFlags::UPDATE_PIPELINE_READY);
 
-            let num_event_buffers = maybe_cached_parent_info
-                .as_ref()
-                .map(|p| p.children.len() as u32)
-                .unwrap_or_default();
+            let num_event_buffers = extracted_effect.num_event_buffers;
 
             let local_space_simulation = extracted_effect
                 .layout_flags
@@ -4512,6 +4544,37 @@ pub(crate) fn prepare_batch_inputs(
     ) in &q_cached_effects
     {
         extracted_effect_count += 1;
+
+        // Skip a child effect whose parent link is half made or half undone,
+        // as in the frames after its parent or a sibling is despawned: it
+        // runs only with its parent, its child info and its event slice all
+        // there.
+        let child_parts = [
+            maybe_child_effect_of.is_some(),
+            maybe_cached_child_info.is_some(),
+            maybe_cached_effect_events.is_some(),
+        ];
+        if child_parts.contains(&true) && child_parts.contains(&false) {
+            trace!(
+                "Effect {}: child link incomplete (child_of, child_info, events: {:?}), skipped.",
+                render_entity,
+                child_parts
+            );
+            continue;
+        }
+
+        // Skip a parent effect whose children are not all there to receive
+        // the events its shaders emit, as in the frame a child is despawned.
+        let num_children = maybe_cached_parent_info.map_or(0, |p| p.children.len() as u32);
+        if num_children != extracted_effect.num_event_buffers {
+            trace!(
+                "Effect {}: {} of its {} child effect(s) configured, skipped.",
+                render_entity,
+                num_children,
+                extracted_effect.num_event_buffers
+            );
+            continue;
+        }
 
         // Skip this effect if not ready
         if !cached_ready_state.is_ready() {

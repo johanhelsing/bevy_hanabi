@@ -483,3 +483,57 @@ fn a_full_parent_gets_a_trail_point_for_every_particle() {
         "the {PARENTS} parents do not get a point each: {points:?}"
     );
 }
+
+/// Run a parent and its trail, despawn one of them, run on, then despawn the
+/// other and run on. Fails on a panic or a GPU validation error, which
+/// quits the app.
+fn despawn_one_then_the_other(despawn_parent_first: bool) {
+    let mut app = headless_app();
+    let world = app.world_mut();
+    let mut assets = world.resource_mut::<Assets<EffectAsset>>();
+    let (head, body) = (
+        assets.add(head_effect(TRAILS)),
+        assets.add(body_effect(TRAILS)),
+    );
+    let parent = world.spawn(ParticleEffect::new(head)).id();
+    let child = world
+        .spawn((ParticleEffect::new(body), EffectParent::new(parent)))
+        .id();
+    let (first, second) = if despawn_parent_first {
+        (parent, child)
+    } else {
+        (child, parent)
+    };
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
+        1. / 60.,
+    )));
+    let run_for = |app: &mut App, frames: u32, after: &str| {
+        for frame in 0..frames {
+            app.update();
+            assert!(
+                app.should_exit().is_none(),
+                "the app quit {frame} frames after {after}"
+            );
+        }
+    };
+    run_for(&mut app, 60, "the pair spawned");
+    app.world_mut().despawn(first);
+    run_for(&mut app, 60, "the first of the pair was despawned");
+    app.world_mut().despawn(second);
+    run_for(&mut app, 30, "the second of the pair was despawned");
+}
+
+/// A trail outlives its parent for a while, as a game's fading emitter may:
+/// the trail is skipped, not drawn against a parent that is gone.
+#[test]
+fn a_trail_whose_parent_is_despawned_first_is_skipped() {
+    despawn_one_then_the_other(true);
+}
+
+/// A parent outlives its trail: it is skipped, not run against the event
+/// slice of a child that is gone, nor recompiled without the child its
+/// shader emits to.
+#[test]
+fn a_parent_whose_trail_is_despawned_first_is_skipped() {
+    despawn_one_then_the_other(false);
+}
